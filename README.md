@@ -71,3 +71,11 @@ export default defineConfig([
   },
 ])
 ```
+OutBound IQ: Email Intelligence ToolArchitecture: React SPA + Vite + Web Workers.
+Operational Highlights:
+- Privacy: Zero server-side interaction. All data remains in the user's browser.
+- Performance: High-volume files (100k+) are streamed via PapaParse chunk logic inside a background Web Worker to bypass the 1.5GB Structured Clone limit.
+- Complexity: $O(N)$ lookup via Hash Maps for metadata preservation.
+Maintenance:
+- Disposable Lists: Update DISPOSABLE_DOMAINS in src/emailWorker.ts to include new burner providers.
+- Role Prefixes: Modify ROLE_PREFIXES in the worker to refine departmental identification.

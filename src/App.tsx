@@ -115,7 +115,7 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans pb-20">
       <header className="bg-white border-b border-slate-200 px-6 py-4 mb-10">
         <div className="max-w-5xl mx-auto flex items-center justify-between">
-          <h1 className="text-xl font-black text-blue-600 tracking-tighter uppercase">OutBound IQ</h1>
+          <h1 className="text-xl font-black text-blue-600 tracking-tighter uppercase">Extractor IQ</h1>
           <span className="text-[10px] font-bold bg-slate-100 px-2 py-1 rounded">V1.1 STABLE</span>
         </div>
       </header>
