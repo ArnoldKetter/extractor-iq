@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Upload, FileText, X, Play, Trash2, BarChart3, Settings, Database, ChevronRight, LayoutDashboard, Download, Filter } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { Upload, FileText, Play, Trash2, BarChart3, Settings, Database, LayoutDashboard, Download } from 'lucide-react';
 import Papa from 'papaparse';
 import { saveAs } from 'file-saver';
 
