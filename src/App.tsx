@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Upload, FileText, Play, Trash2, BarChart3, Settings, Database, LayoutDashboard, Download } from 'lucide-react';
+import { Upload, FileText, Play, Trash2, BarChart3, Settings, Database, LayoutDashboard, Download, Clipboard, FilePlus } from 'lucide-react';
 import Papa from 'papaparse';
 import { saveAs } from 'file-saver';
 
@@ -95,6 +95,10 @@ const App: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
+  // Text Paste State
+  const [importMode, setImportMode] = useState<'upload' | 'paste'>('upload');
+  const [pastedText, setPastedText] = useState('');
+  
   // Table State
   const [filter, setFilter] = useState<'all' | 'corporate' | 'personal' | 'role'>('all');
   const [currentPage, setCurrentPage] = useState(1);
@@ -103,43 +107,56 @@ const App: React.FC = () => {
   // Add File to Staging
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
-      const newFiles: FileStage[] = Array.from(e.target.files).map(file => ({
-        id: Math.random().toString(36).substr(2, 9),
-        file,
-        columns: [],
-        selectedColumn: '',
-        status: 'pending'
-      }));
-
-      // Pre-scan for columns
-      newFiles.forEach(f => {
-        if (f.file.name.endsWith('.csv')) {
-          Papa.parse(f.file, {
-            header: true,
-            preview: 1,
-            complete: (res) => {
-              if (res.meta.fields) {
-                const cols = res.meta.fields;
-                // Auto-detect email column
-                const emailCol = cols.find(c => c.toLowerCase().includes('email') || c.toLowerCase().includes('mail')) || '';
-                
-                setStagedFiles(prev => prev.map(pf => pf.id === f.id ? { 
-                  ...pf, 
-                  columns: cols, 
-                  selectedColumn: emailCol,
-                  status: emailCol ? 'ready' : 'pending' 
-                } : pf));
-              }
-            }
-          });
-        } else {
-           // TXT file is always ready
-           setStagedFiles(prev => prev.map(pf => pf.id === f.id ? { ...pf, status: 'ready' } : pf));
-        }
-      });
-      
-      setStagedFiles(prev => [...prev, ...newFiles]);
+      processFiles(Array.from(e.target.files));
     }
+  };
+
+  const processFiles = (files: File[]) => {
+    const newFiles: FileStage[] = files.map(file => ({
+      id: Math.random().toString(36).substr(2, 9),
+      file,
+      columns: [],
+      selectedColumn: '',
+      status: 'pending'
+    }));
+
+    // Pre-scan for columns
+    newFiles.forEach(f => {
+      if (f.file.name.endsWith('.csv')) {
+        Papa.parse(f.file, {
+          header: true,
+          preview: 1,
+          complete: (res) => {
+            if (res.meta.fields) {
+              const cols = res.meta.fields;
+              const emailCol = cols.find(c => c.toLowerCase().includes('email') || c.toLowerCase().includes('mail')) || '';
+              
+              setStagedFiles(prev => prev.map(pf => pf.id === f.id ? { 
+                ...pf, 
+                columns: cols, 
+                selectedColumn: emailCol,
+                status: emailCol ? 'ready' : 'pending' 
+              } : pf));
+            }
+          }
+        });
+      } else {
+         setStagedFiles(prev => prev.map(pf => pf.id === f.id ? { ...pf, status: 'ready' } : pf));
+      }
+    });
+    
+    setStagedFiles(prev => [...prev, ...newFiles]);
+  };
+
+  // Convert Text to Virtual File
+  const handleTextSubmit = () => {
+    if (!pastedText.trim()) return;
+    
+    const virtualFile = new File([pastedText], `Manual_Input_${new Date().getTime()}.txt`, { type: "text/plain" });
+    processFiles([virtualFile]);
+    
+    setPastedText(''); // Clear input
+    setImportMode('upload'); // Switch back to list view to show it was added
   };
 
   const updateColumn = (id: string, col: string) => {
@@ -152,19 +169,17 @@ const App: React.FC = () => {
 
   const runBatchProcessing = async () => {
     setIsProcessing(true);
-    setView('results'); // Auto-switch to results view
+    setView('results');
     const worker = new Worker(new URL('./emailWorker.ts', import.meta.url), { type: 'module' });
 
     worker.postMessage({ action: 'reset' });
 
-    // Helper to process one file promise
     const processFile = (stage: FileStage) => new Promise<void>((resolve) => {
       setStagedFiles(prev => prev.map(f => f.id === stage.id ? { ...f, status: 'processing' } : f));
       
       if (stage.file.name.endsWith('.csv')) {
         worker.postMessage({ action: 'process', file: stage.file, selectedColumn: stage.selectedColumn });
       } else {
-        // Read text file
         const reader = new FileReader();
         reader.onload = (e) => {
           worker.postMessage({ action: 'process', text: e.target?.result });
@@ -172,7 +187,6 @@ const App: React.FC = () => {
         reader.readAsText(stage.file);
       }
 
-      // Listen for individual file completion
       const handler = (e: MessageEvent) => {
         if (e.data.action === 'file_complete') {
           setStagedFiles(prev => prev.map(f => f.id === stage.id ? { ...f, status: 'done' } : f));
@@ -183,12 +197,10 @@ const App: React.FC = () => {
       worker.addEventListener('message', handler);
     });
 
-    // Process sequentially
     for (const file of stagedFiles) {
       await processFile(file);
     }
 
-    // Finalize
     worker.postMessage({ action: 'finalize' });
     worker.onmessage = (e) => {
       if (e.data.action === 'result') {
@@ -218,61 +230,111 @@ const App: React.FC = () => {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h2 className="text-2xl font-bold text-zinc-900">Import Data</h2>
-          <p className="text-zinc-500">Upload multiple CSV or TXT files to create a unified batch.</p>
+          <p className="text-zinc-500">Upload multiple CSV/TXT files or paste raw text to create a unified batch.</p>
         </div>
-        <button 
-          onClick={() => fileInputRef.current?.click()}
-          className="flex items-center space-x-2 bg-black text-white px-4 py-2 rounded-md hover:bg-zinc-800 transition-all font-medium text-sm"
-        >
-          <Upload className="w-4 h-4" />
-          <span>Add Files</span>
-        </button>
-        <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".csv,.txt" multiple className="hidden" />
+        
+        {/* Toggle Switch */}
+        <div className="bg-zinc-200 p-1 rounded-lg flex space-x-1">
+          <button 
+            onClick={() => setImportMode('upload')}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${importMode === 'upload' ? 'bg-white shadow-sm text-black' : 'text-zinc-500 hover:text-zinc-700'}`}
+          >
+            File Upload
+          </button>
+          <button 
+            onClick={() => setImportMode('paste')}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${importMode === 'paste' ? 'bg-white shadow-sm text-black' : 'text-zinc-500 hover:text-zinc-700'}`}
+          >
+            Paste Text
+          </button>
+        </div>
       </div>
 
-      <div className="bg-white border border-zinc-200 rounded-lg overflow-hidden shadow-sm">
-        {stagedFiles.length === 0 ? (
-          <div className="p-20 text-center text-zinc-400">
-             <div className="w-16 h-16 bg-zinc-50 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Database className="w-8 h-8 text-zinc-300" />
-             </div>
-             <p className="font-medium">No files staged for processing</p>
-             <p className="text-sm mt-1">Click "Add Files" to begin your batch session</p>
-          </div>
-        ) : (
-          <div className="divide-y divide-zinc-100">
-            {stagedFiles.map((file) => (
-              <div key={file.id} className="p-4 flex items-center justify-between group hover:bg-zinc-50 transition-colors">
-                <div className="flex items-center space-x-4">
-                  <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-lg flex items-center justify-center">
-                    <FileText className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <p className="font-medium text-sm text-zinc-900">{file.file.name}</p>
-                    <p className="text-xs text-zinc-500">{(file.file.size / 1024).toFixed(1)} KB</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center space-x-4">
-                  {file.file.name.endsWith('.csv') && (
-                    <div className="flex items-center space-x-2">
-                       <span className="text-xs font-medium text-zinc-400">Map Email:</span>
-                       <select 
-                         value={file.selectedColumn}
-                         onChange={(e) => updateColumn(file.id, e.target.value)}
-                         className={`text-xs border rounded p-1.5 outline-none focus:ring-1 focus:ring-blue-500 ${!file.selectedColumn ? 'border-red-300 bg-red-50 text-red-600' : 'border-zinc-300'}`}
-                       >
-                         <option value="">Select Column...</option>
-                         {file.columns.map(c => <option key={c} value={c}>{c}</option>)}
-                       </select>
+      <div className="bg-white border border-zinc-200 rounded-lg overflow-hidden shadow-sm min-h-[400px]">
+        {importMode === 'upload' ? (
+          <>
+            {stagedFiles.length === 0 ? (
+              <div className="p-20 text-center text-zinc-400">
+                 <div className="w-16 h-16 bg-zinc-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Database className="w-8 h-8 text-zinc-300" />
+                 </div>
+                 <p className="font-medium">No files staged for processing</p>
+                 <button 
+                   onClick={() => fileInputRef.current?.click()}
+                   className="mt-4 text-blue-600 font-medium hover:underline flex items-center justify-center mx-auto"
+                 >
+                   <FilePlus className="w-4 h-4 mr-2" />
+                   Browse Files
+                 </button>
+              </div>
+            ) : (
+              <div className="divide-y divide-zinc-100">
+                {stagedFiles.map((file) => (
+                  <div key={file.id} className="p-4 flex items-center justify-between group hover:bg-zinc-50 transition-colors">
+                    <div className="flex items-center space-x-4">
+                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${file.file.type === 'text/plain' ? 'bg-purple-50 text-purple-600' : 'bg-blue-50 text-blue-600'}`}>
+                        {file.file.type === 'text/plain' ? <Clipboard className="w-5 h-5" /> : <FileText className="w-5 h-5" />}
+                      </div>
+                      <div>
+                        <p className="font-medium text-sm text-zinc-900">{file.file.name}</p>
+                        <p className="text-xs text-zinc-500">{(file.file.size / 1024).toFixed(1)} KB</p>
+                      </div>
                     </div>
-                  )}
-                  <button onClick={() => removeFile(file.id)} className="p-2 text-zinc-300 hover:text-red-500 transition-colors">
-                    <Trash2 className="w-4 h-4" />
+
+                    <div className="flex items-center space-x-4">
+                      {file.file.name.endsWith('.csv') && (
+                        <div className="flex items-center space-x-2">
+                           <span className="text-xs font-medium text-zinc-400">Map Email:</span>
+                           <select 
+                             value={file.selectedColumn}
+                             onChange={(e) => updateColumn(file.id, e.target.value)}
+                             className={`text-xs border rounded p-1.5 outline-none focus:ring-1 focus:ring-blue-500 ${!file.selectedColumn ? 'border-red-300 bg-red-50 text-red-600' : 'border-zinc-300'}`}
+                           >
+                             <option value="">Select Column...</option>
+                             {file.columns.map(c => <option key={c} value={c}>{c}</option>)}
+                           </select>
+                        </div>
+                      )}
+                      <button onClick={() => removeFile(file.id)} className="p-2 text-zinc-300 hover:text-red-500 transition-colors">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                
+                <div className="p-4 bg-zinc-50 border-t border-zinc-100 flex justify-center">
+                  <button 
+                    onClick={() => fileInputRef.current?.click()}
+                    className="text-sm font-medium text-zinc-600 hover:text-black flex items-center"
+                  >
+                    <FilePlus className="w-4 h-4 mr-2" /> Add More Files
                   </button>
                 </div>
               </div>
-            ))}
+            )}
+            <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".csv,.txt" multiple className="hidden" />
+          </>
+        ) : (
+          <div className="flex flex-col h-[400px]">
+            <div className="p-4 border-b border-zinc-100 bg-zinc-50">
+              <h3 className="text-sm font-bold text-zinc-700">Manual Input</h3>
+              <p className="text-xs text-zinc-500">Paste raw text containing emails. We'll treat this as a .txt file.</p>
+            </div>
+            <textarea 
+              className="flex-1 p-4 outline-none resize-none text-sm font-mono text-zinc-700"
+              placeholder="e.g. john@doe.com, jane@agency.net..."
+              value={pastedText}
+              onChange={(e) => setPastedText(e.target.value)}
+            />
+            <div className="p-4 border-t border-zinc-100 flex justify-end bg-zinc-50">
+              <button 
+                onClick={handleTextSubmit}
+                disabled={!pastedText.trim()}
+                className="bg-black text-white px-6 py-2 rounded-md text-sm font-bold hover:bg-zinc-800 disabled:opacity-50 transition-colors"
+              >
+                Add to Batch
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -291,7 +353,7 @@ const App: React.FC = () => {
             ) : (
                <>
                  <Play className="w-4 h-4 fill-current" />
-                 <span>Process {stagedFiles.length} Files</span>
+                 <span>Process {stagedFiles.length} Sources</span>
                </>
             )}
           </button>
@@ -309,7 +371,6 @@ const App: React.FC = () => {
         </div>
     );
 
-    // Filter Logic for Table
     const filteredData = results.valid.filter(item => {
         if (filter === 'corporate') return item.type === 'Corporate';
         if (filter === 'personal') return item.type === 'Personal';
@@ -328,7 +389,6 @@ const App: React.FC = () => {
            </div>
         </div>
 
-        {/* Funnel Metrics */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-10">
            <MetricCard label="Raw Rows Imported" value={results.stats.totalRows} colorClass="text-zinc-600" />
            <div className="flex flex-col space-y-4 justify-center">
@@ -345,7 +405,6 @@ const App: React.FC = () => {
            <MetricCard label="High-Value (Corp)" value={results.valid.filter(r => r.type === 'Corporate' && !r.isRoleBased).length} colorClass="text-green-600" sub="Non-Role Corporate" />
         </div>
 
-        {/* Table Area */}
         <div className="bg-white border border-zinc-200 rounded-lg shadow-sm overflow-hidden">
            <div className="border-b border-zinc-200 p-4 bg-zinc-50 flex items-center justify-between">
               <div className="flex space-x-1">
@@ -396,7 +455,6 @@ const App: React.FC = () => {
              </table>
            </div>
            
-           {/* Pagination */}
            <div className="p-4 border-t border-zinc-200 flex justify-between items-center bg-zinc-50">
              <button disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)} className="text-xs font-bold text-zinc-500 hover:text-zinc-900 disabled:opacity-30">Previous</button>
              <span className="text-xs text-zinc-400">Page {currentPage}</span>
